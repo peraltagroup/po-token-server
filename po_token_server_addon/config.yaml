@@ -48,4 +48,4 @@ schema:
   po_player_clients: str
   cors_origins: str
 advanced: true
-webui: "http://[HOST]:{port:4416}"
+webui: "http://[HOST]:[PORT:4416]"
