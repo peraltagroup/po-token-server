@@ -68,7 +68,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # --- startup ----------------------------------------------------- #
+        logger.info("DEBUG: data_dir=%s, database_url=%s, resolved=%s",
+                    settings.data_dir, settings.database_url, settings.resolved_database_url)
         storage = Storage(settings.resolved_database_url)
+        logger.info("DEBUG: Storage._path=%s", storage._path)
         await storage.connect()
         cipher = SecretCipher(settings.secret_key)
         jwt_service = JWTService(settings)
