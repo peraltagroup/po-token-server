@@ -20,7 +20,7 @@ boot: auto
 map:
   - config
 options:
-  data_dir: /tmp
+  database_url: "sqlite+aiosqlite:////tmp/po_token.db"
   public_url: http://localhost:4416
   jwt_secret: ""
   jwt_algorithm: HS256
@@ -35,7 +35,7 @@ options:
   po_player_clients: "web_music,web,android"
   cors_origins: "*"
 schema:
-  data_dir: str
+  database_url: str
   public_url: str
   jwt_secret: str
   jwt_algorithm: str
