@@ -7,7 +7,7 @@ description: >-
   endpoint. Replaces the bgutil-ytdlp-pot-provider add-on and removes the need
   for manual browser cookie extraction.
 url: https://github.com/peraltagroup/po-token-server
-image: ghcr.io/peraltagroup/po-token-server:amd64-1.0.0
+image: ghcr.io/peraltagroup/po-token-server
 arch:
   - amd64
   - aarch64
