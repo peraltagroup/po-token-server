@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "po-token-server"
+version = "1.0.0"
+description = "Self-hosted, multi-user PO Token server with OAuth 2.0 / OIDC auth, stateless JWT sessions, and a yt-dlp-compatible /get_token endpoint."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Home Assistant" }]
+keywords = ["youtube", "po-token", "yt-dlp", "oauth2", "openid-connect", "music-assistant"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "authlib>=1.3",
+    "pyjwt>=2.8",
+    "cryptography>=42.0",
+    "aiosqlite>=0.20",
+    "httpx>=0.27",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# The real PO token math. Optional so the server (and its tests) can run without it;
+# the generator falls back to a stub when it is not installed.
+pot = ["bgutil-ytdlp-pot-provider>=1.3.2"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+po-token-server = "po_token_server.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["po_token_server*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

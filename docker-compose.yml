@@ -1,0 +1,39 @@
+# PO Token server — standalone Docker Compose deployment.
+#
+# Usage:
+#   1. cp .env.example .env   (then fill in the OAuth + secret values)
+#   2. docker compose up -d --build
+#
+# The SQLite database is persisted in the `po-data` volume.
+
+services:
+  po-token-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: po-token-server:1.0.0
+    container_name: po-token-server
+    restart: unless-stopped
+    ports:
+      - "4416:4416"
+    env_file:
+      - .env
+    environment:
+      # Absolute paths inside the container.
+      PO_DATA_DIR: /data
+      PO_DATABASE_URL: sqlite+aiosqlite:////data/po_token.db
+    volumes:
+      - po-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4416/health', timeout=4).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  po-data:

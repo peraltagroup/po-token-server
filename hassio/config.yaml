@@ -1,0 +1,56 @@
+name: PO Token Server
+description: >-
+  Self-hosted, multi-user PO Token server with OAuth 2.0 / OIDC login,
+  stateless JWT sessions, token refresh, and a yt-dlp-compatible /get_token
+  endpoint. Replaces the bgutil-ytdlp-pot-provider add-on and removes the need
+  for manual browser cookie extraction.
+version: "1.0.0"
+slug: po_token_server
+url: "https://github.com/peraltagroup/po-token-server"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - armhf
+  - i386
+startup: application
+boot: auto
+host_network: false
+ports:
+  - 4416/tcp
+ports_description:
+  4416/tcp: PO Token HTTP API
+map:
+  - config
+options:
+  public_url: http://localhost:4416
+  jwt_secret: ""
+  jwt_algorithm: HS256
+  access_token_ttl: 900
+  refresh_token_ttl: 2592000
+  secret_key: ""
+  oidc_discovery_url: https://accounts.google.com/.well-known/openid-configuration
+  oauth_client_id: ""
+  oauth_client_secret: ""
+  oauth_scopes: "openid email profile"
+  po_cache_ttl: 21600
+  po_player_clients: "web_music,web,android"
+  cors_origins: "*"
+schema:
+  public_url: str
+  jwt_secret: str
+  jwt_algorithm: list[HS256,RS256]?
+  access_token_ttl: int(300:86400)?
+  refresh_token_ttl: int(3600:)?
+  secret_key: str
+  oidc_discovery_url: str
+  oauth_client_id: str
+  oauth_client_secret: str
+  oauth_scopes: str?
+  po_cache_ttl: int(60:)?
+  po_player_clients: str?
+  cors_origins: str?
+advanced: true
+image: "ghcr.io/peraltagroup/po-token-server"
+webui: "http://[HOST]:{port:4416}"
+state: "running"
