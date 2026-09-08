@@ -20,7 +20,7 @@ boot: auto
 map:
   - config
 options:
-  data_dir: /config
+  data_dir: /tmp
   public_url: http://localhost:4416
   jwt_secret: ""
   jwt_algorithm: HS256
