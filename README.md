@@ -1,12 +1,61 @@
 # PO Token Server
 
-A self-hosted, **multi-user** PO Token server that replaces the
-`bgutil-ytdlp-pot-provider` add-on. It provides:
+A self-hosted, multi-user **PO Token server** for Home Assistant. It issues the
+"PO tokens" that yt-dlp and Music Assistant need to stream YouTube (and
+YouTube Music) reliably — and it does so through a proper, automated
+**OAuth 2.0 / OpenID Connect** login instead of manual browser-cookie
+scraping.
 
-- **OAuth 2.0 / OpenID Connect login** (authorization-code + PKCE) — no manual
-  browser cookie extraction.
+---
+
+## Origin & the problem it solves
+
+Music Assistant's YouTube Music provider (and yt-dlp in general) depend on
+**PO tokens** — short-lived, per-client proof-of-origin tokens that YouTube
+requires for many streams. Without a valid PO token, playback fails or is
+throttled.
+
+The common way to supply these tokens is the third-party
+[`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
+add-on. In practice that setup has two painful gaps:
+
+1. **Manual cookie extraction.** You have to log in to YouTube in a browser,
+   scrape the session cookie, and paste it into the provider's configuration.
+   The cookie expires, the step has to be repeated, and it is fragile and
+   error-prone — especially on a headless Home Assistant OS box where there is
+   no browser to scrape from.
+2. **Single-user, single-credential.** The add-on is effectively tied to one
+   scraped credential. It does not cleanly support several household members
+   each using their own Google account, nor does it give each client (e.g. one
+   Music Assistant provider instance per user) its own scoped credential.
+
+`po-token-server` was built to close both gaps.
+
+## Purpose
+
+Provide a **secure, automated, multi-user** replacement for the bgutil add-on
+that:
+
+- **Eliminates manual cookie extraction.** Users sign in once through standard
+  OAuth 2.0 / OIDC (Google by default). The server holds the resulting session
+  securely and mints PO tokens on demand — no browser scraping, ever.
+- **Supports concurrent multi-user sessions.** Every user authenticates with
+  their own identity and receives their own, isolated PO tokens.
+- **Is stateless and refreshable.** Sessions are signed JWTs with rotating
+  refresh tokens, so the server keeps no client-side cookies and can scale to
+  many simultaneous logins.
+- **Drops into the existing stack.** It exposes a yt-dlp-compatible
+  `/get_token` endpoint, so Music Assistant and yt-dlp keep working unchanged —
+  you just point them at this server.
+- **Runs on Home Assistant OS.** It is packaged as a custom add-on (and as a
+  plain Docker image), so it deploys alongside Music Assistant.
+
+## What it does
+
+- **OAuth 2.0 / OpenID Connect login** (authorization-code + PKCE) with nonce
+  validation — no manual browser cookie extraction.
 - **Stateless JWT sessions** (HS256) with per-`jti` revocation.
-- **Rotating refresh tokens** with family-based reuse detection.
+- **Rotating refresh tokens** with family-based reuse (theft) detection.
 - **Concurrent multi-user** support — every user gets their own PO tokens,
   cached and isolated.
 - A **yt-dlp-compatible `/get_token` endpoint** so Music Assistant / yt-dlp
@@ -253,7 +302,7 @@ install. No manual Docker steps on the HAOS box.
 
 1. **Supervisor → Menu (⋮) → Add-on Store → ⋮ → "Add custom add-on store"**.
 2. Paste the repository URL, e.g.
-   `https://github.com/<you>/po-token-server` and click **Reload**.
+   `https://github.com/peraltagroup/po-token-server` and click **Reload**.
 3. The **PO Token Server** add-on now appears in the store → **Install**.
 4. Open the add-on → **Configuration** and set:
    - `public_url` — the URL HAOS users reach the add-on at, e.g.
@@ -289,10 +338,10 @@ addon/
 2. **Build & push** the images (one per architecture you support):
    ```bash
    cd po_token_server/addon
-   REGISTRY=ghcr.io/<you> VERSION=1.0.0 ARCHS="amd64 aarch64" ./build.sh --push
+   REGISTRY=ghcr.io/peraltagroup VERSION=1.0.0 ARCHS="amd64 aarch64" ./build.sh --push
    ```
-   This produces `ghcr.io/<you>/po-token-server:amd64-1.0.0`, etc. Make sure the
-   `image:` field in each `config.yaml` matches the pushed tag.
+   This produces `ghcr.io/peraltagroup/po-token-server:amd64-1.0.0`, etc. Make
+   sure the `image:` field in each `config.yaml` matches the pushed tag.
 3. **Commit & push** the repo (including `repo.yaml` and `data/`).
 4. Users add the repo URL as in the end-user steps above.
 
