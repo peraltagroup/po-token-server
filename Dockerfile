@@ -35,17 +35,14 @@ FROM python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
-    PO_DATA_DIR=/data
+    PO_DATA_DIR=/config
 
-# Non-root user.
-RUN groupadd -r potoken && useradd -r -g potoken -d /data potoken \
-    && mkdir -p /data && chown -R potoken:potoken /data
+# Note: runs as root (like most HAOS add-ons) so it can write to the
+# mapped /config volume. The container provides the security isolation.
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /build/po_token_server /app/po_token_server
-
-USER potoken
 
 EXPOSE 4416
 
