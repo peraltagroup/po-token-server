@@ -1,0 +1,17 @@
+# Home Assistant add-on repository manifest.
+#
+# This file MUST live at the ROOT of the git repository that users add as a
+# custom add-on store. The Supervisor fetches it (and the per-arch
+# config.yaml files under data/<arch>/) to list and install the add-on.
+#
+# Layout the Supervisor expects:
+#   <repo-root>/
+#   ├── repo.yaml                 <- this file
+#   └── data/
+#       └── amd64/
+#           ├── config.yaml
+#           └── Dockerfile
+name: PO Token Server Add-ons
+url: "https://github.com/peraltagroup/po-token-server"
+maintainers:
+  - "Victor Peralta <vic@peraltagroup.com>"

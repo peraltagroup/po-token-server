@@ -13,7 +13,12 @@ env/
 
 # Local secrets / runtime data — NEVER commit these
 .env
+# Ignore the runtime SQLite data dir (PO_DATA_DIR defaults to ./data) ...
 data/
+# ... but force-include the add-on manifest dir which MUST be committed.
+!data/
+!data/amd64/
+!data/amd64/*
 *.db
 *.db-wal
 *.db-shm

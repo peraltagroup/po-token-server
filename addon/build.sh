@@ -19,7 +19,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# The per-arch Dockerfiles + config.yaml live under <repo-root>/data/<arch>/.
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 REGISTRY="${REGISTRY:-example}"
 IMAGE="${IMAGE:-po-token-server}"
@@ -34,7 +35,7 @@ for arch in ${ARCHS}; do
   echo ">> [${arch}] building..."
   docker buildx build \
     --platform "linux/${arch}" \
-    -f "${SCRIPT_DIR}/data/${arch}/Dockerfile" \
+    -f "${REPO_ROOT}/data/${arch}/Dockerfile" \
     -t "${REGISTRY}/${IMAGE}:${arch}-${VERSION}" \
     "${REPO_ROOT}"
 
