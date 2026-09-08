@@ -100,6 +100,12 @@ class Storage:
         # Accept "sqlite+aiosqlite:///path", "sqlite:///path", or a bare path.
         # The triple-slash form yields an empty authority, so ":memory:" and
         # relative/absolute paths are handled correctly.
+        #
+        # URL forms:
+        #   sqlite+aiosqlite:///relative/path  -> after prefix: /relative/path
+        #   sqlite+aiosqlite:////absolute/path -> after prefix: //absolute/path
+        #
+        # So: one leading slash = relative, two leading slashes = absolute.
         url = database_url
         for prefix in ("sqlite+aiosqlite://", "sqlite://"):
             if url.startswith(prefix):
@@ -107,9 +113,13 @@ class Storage:
                 break
         else:
             path = url
-        # Normalize the leading slash left over from the "///" form.
-        if path.startswith("/") and not path.startswith("//"):
-            path = path.lstrip("/")
+        # Normalize: strip the URL's leading slash(es) to get the real path.
+        if path.startswith("//"):
+            # Absolute path: "//config/po_token.db" -> "/config/po_token.db"
+            path = path[1:]
+        elif path.startswith("/"):
+            # Relative path: "/./data/po_token.db" -> "./data/po_token.db"
+            path = path[1:]
         self._path = path
         self._db: aiosqlite.Connection | None = None
 
