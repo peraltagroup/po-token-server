@@ -35,7 +35,7 @@ FROM python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
-    PO_DATA_DIR=/config
+    PO_DATA_DIR=/app
 
 # Note: runs as root (like most HAOS add-ons) so it can write to the
 # mapped /config volume. The container provides the security isolation.
