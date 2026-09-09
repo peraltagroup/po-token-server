@@ -21,7 +21,7 @@ from . import __version__
 from .config import Settings, get_settings
 from .oauth import OAuthService
 from .potoken import POTokenGenerator
-from .routers import admin, auth, tokens
+from .routers import admin, admin_ui, auth, tokens
 from .security import JWTService, SecretCipher, redact_json
 from .storage import Storage
 
@@ -170,6 +170,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(tokens.router)
     app.include_router(admin.router)
+    app.include_router(admin_ui.router)
 
     # --- Health / readiness --------------------------------------------- #
     @app.get("/health", tags=["health"])

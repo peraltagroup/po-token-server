@@ -3,10 +3,9 @@
 # PO Token server — multi-stage build.
 #
 # Stage 1 (py-builder): install the Python package into an isolated venv.
-# Stage 2 (bgutil-builder): build the bgutil Node.js PO token server.
-# Stage 3 (runtime): a slim image that runs both the Python app (port 4416)
-#   and the bgutil server (port 4417, internal) via a supervisor script.
-#   The SQLite database lives in /app (a volume).
+# Stage 2 (runtime): python:3.11-slim base with the bgutil-pot static binary
+#   downloaded from GitHub releases. Runs both the bgutil server (port 4417,
+#   internal) and the Python app (port 4416, external) via a supervisor script.
 
 # ---------------------------------------------------------------------------
 # Stage 1: Python builder
@@ -31,36 +30,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install "."
 
 # ---------------------------------------------------------------------------
-# Stage 2: bgutil Node.js server builder
-# ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS bgutil-builder
-
-WORKDIR /bgutil
-
-# canvas (native dep) needs these system libs at build time
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        pkg-config \
-        libcairo2-dev \
-        libpango1.0-dev \
-        libjpeg-dev \
-        libgif-dev \
-        librsvg2-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy the bgutil server source (pinned to a known-good commit)
-RUN git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /bgutil-src \
-    && cd /bgutil-src/server \
-    && npm ci --no-audit --no-fund \
-    && npx tsc \
-    && mkdir -p /bgutil/build \
-    && cp -r build /bgutil/build/ \
-    && cp package.json /bgutil/ \
-    && cp -r node_modules /bgutil/node_modules/
-
-# ---------------------------------------------------------------------------
-# Stage 3: Runtime
+# Stage 2: Runtime
 # ---------------------------------------------------------------------------
 FROM python:3.11-slim AS runtime
 
@@ -70,36 +40,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PO_DATA_DIR=/app \
     PO_BGUTIL_URL=http://127.0.0.1:4417
 
-# Runtime system libs needed by canvas (native module)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libcairo2 \
-        libpango-1.0-0 \
-        libjpeg62-turbo \
-        libgif7 \
-        librsvg2-2 \
-        libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Install Node.js 22 (for the bgutil server)
+# Download the bgutil-pot static binary from GitHub releases
+# (Rust implementation — no Node.js, no canvas, no native deps)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && curl -fsSL -o /usr/local/bin/bgutil-pot \
+        "https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs/releases/latest/download/bgutil-pot-linux-x86_64" \
+    && chmod +x /usr/local/bin/bgutil-pot
 
 WORKDIR /app
 
 # Python app
 COPY --from=py-builder /opt/venv /opt/venv
 COPY --from=py-builder /build/po_token_server /app/po_token_server
-
-# bgutil server
-COPY --from=bgutil-builder /bgutil/build /app/bgutil/build
-COPY --from=bgutil-builder /bgutil/node_modules /app/bgutil/node_modules
-COPY --from=bgutil-builder /bgutil/package.json /app/bgutil/package.json
 
 # Supervisor script: starts bgutil (4417) then Python app (4416)
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh

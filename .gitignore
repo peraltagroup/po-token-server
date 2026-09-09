@@ -35,3 +35,4 @@ htmlcov/
 Thumbs.db
 .idea/
 .vscode/
+client_secret_*.json

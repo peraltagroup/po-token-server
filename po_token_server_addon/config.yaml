@@ -1,5 +1,5 @@
 name: PO Token Server
-version: "1.1.0"
+version: "1.1.1"
 slug: po_token_server
 description: >-
   Self-hosted, multi-user PO Token server with OAuth 2.0 / OIDC login,

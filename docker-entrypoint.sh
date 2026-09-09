@@ -1,9 +1,8 @@
 #!/bin/sh
 set -e
 
-echo "[entrypoint] Starting bgutil PO token server on port 4417..."
-cd /app/bgutil
-node build/main.js --port 4417 --host 127.0.0.1 &
+echo "[entrypoint] Starting bgutil PO token server (Rust) on port 4417..."
+bgutil-pot server --host 127.0.0.1 --port 4417 &
 BGUTIL_PID=$!
 
 # Wait for bgutil to be ready (up to 30s)
