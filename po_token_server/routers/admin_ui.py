@@ -101,11 +101,11 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...opts.headers };
   if (token) headers['Authorization'] = 'Bearer ' + token;
   const resp = await fetch(API + path, { ...opts, headers });
-  if (resp.status === 401) {
+  if (resp.status === 401 || resp.status === 403) {
     token = '';
     localStorage.removeItem('pot_admin_token');
     render();
-    throw new Error('Unauthorized');
+    throw new Error(resp.status === 403 ? 'Not authorized' : 'Unauthorized');
   }
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.detail || resp.statusText);
@@ -319,4 +319,4 @@ render();
 @router.get("/admin", response_class=HTMLResponse, include_in_schema=False)
 async def admin_ui(request: Request) -> HTMLResponse:
     """Serve the admin dashboard."""
-    return HTMLResponse(_ADMIN_HTML)
+    return HTMLResponse(_ADMIN_HTML, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
