@@ -74,6 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         jwt_service = JWTService(settings)
         oauth = OAuthService(settings, storage, jwt_service, cipher)
         potoken = POTokenGenerator(settings, storage, cipher)
+        await potoken.start()
 
         app.state.settings = settings
         app.state.storage = storage
@@ -95,6 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         yield
         # --- shutdown ---------------------------------------------------- #
+        await potoken.stop()
         await storage.close()
         logger.info("PO Token Server stopped")
 

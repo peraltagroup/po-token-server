@@ -93,6 +93,10 @@ class Settings(BaseSettings):
         default="web_music,web,android",
         description="Comma-separated yt-dlp player clients to pre-generate",
     )
+    bgutil_url: str = Field(
+        default="http://127.0.0.1:4417",
+        description="Base URL of the bgutil Node.js PO token server",
+    )
 
     # --- Rate limiting ----------------------------------------------------
     rate_limit_auth: int = Field(

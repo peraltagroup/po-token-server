@@ -1,10 +1,11 @@
 """PO token generation with a per-user cache.
 
-Wraps the reference ``bgutil-ytdlp-pot-provider`` library for the actual PO
-token math. When that library is not installed (e.g. in unit tests or a
-minimal environment) a deterministic **stub** generator is used so the rest of
-the server — auth, sessions, caching, the yt-dlp endpoint — remains fully
-testable.
+Delegates actual PO token generation to the bundled **bgutil Node.js server**
+(which runs as a sidecar process on ``PO_BGUTIL_URL``, default
+``http://127.0.0.1:4417``). When the bgutil server is unreachable (e.g. in
+unit tests or a minimal environment) a deterministic **stub** generator is
+used so the rest of the server — auth, sessions, caching, the yt-dlp
+endpoint — remains fully testable.
 
 Concurrency model
 -----------------
@@ -18,10 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+import httpx
 
 from .config import Settings
 from .models import PoTokenResponse
@@ -48,26 +52,49 @@ class POTokenGenerator:
         self._storage = storage
         self._cipher = cipher
         self._locks: dict[str, asyncio.Lock] = {}
-        self._bgutil = self._try_load_bgutil()
+        self._bgutil_url = settings.bgutil_url.rstrip("/")
+        self._bgutil_available: bool | None = None  # lazily probed
+        self._http: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------ #
-    # bgutil integration
+    # Lifecycle
     # ------------------------------------------------------------------ #
-    def _try_load_bgutil(self) -> Any | None:
-        """Import the bgutil PO token provider if available."""
-        try:
-            # The library exposes a POTProvider / get_pot entry point in recent
-            # versions. We import defensively so a missing/changed API degrades
-            # to the stub rather than crashing the server.
-            from bgutil_ytdlp_pot_provider import POTProvider  # type: ignore
-
-            return POTProvider
-        except Exception:  # pragma: no cover - optional dependency
-            logger.info(
-                "bgutil-ytdlp-pot-provider not installed; using stub PO token "
-                "generator. Install the 'pot' extra for real tokens."
+    async def start(self) -> None:
+        """Create the shared HTTP client and probe the bgutil server."""
+        self._http = httpx.AsyncClient(timeout=60.0)
+        self._bgutil_available = await self._probe_bgutil()
+        if self._bgutil_available:
+            logger.info("bgutil server available at %s", self._bgutil_url)
+        else:
+            logger.warning(
+                "bgutil server NOT reachable at %s — using stub PO token "
+                "generator. Real tokens require the bgutil Node.js server.",
+                self._bgutil_url,
             )
-            return None
+
+    async def stop(self) -> None:
+        """Close the HTTP client."""
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
+    async def _probe_bgutil(self) -> bool:
+        """Check whether the bgutil server is up via GET /ping."""
+        if self._http is None:
+            return False
+        try:
+            resp = await self._http.get(f"{self._bgutil_url}/ping", timeout=5.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info(
+                    "bgutil server ping OK (version=%s, uptime=%.1fs)",
+                    data.get("version", "?"),
+                    data.get("server_uptime", 0),
+                )
+                return True
+        except Exception as exc:
+            logger.debug("bgutil ping failed: %s", exc)
+        return False
 
     # ------------------------------------------------------------------ #
     # Locks
@@ -127,21 +154,120 @@ class POTokenGenerator:
         if user is None:
             raise POTokenError(f"Unknown user: {user_id}")
 
-        # If we have a real bgutil provider and the user has Google
-        # credentials, use them. Otherwise fall back to the stub.
-        if self._bgutil is not None and user.encrypted_google_refresh_token:
+        # Try the bgutil HTTP server first.
+        if await self._bgutil_ready():
             try:
-                return await self._generate_with_bgutil(
+                return await self._generate_via_bgutil_http(
                     user, player_client, video_id
                 )
-            except Exception as exc:  # pragma: no cover - depends on lib
+            except Exception as exc:
                 logger.warning(
-                    "bgutil PO token generation failed for user %s: %s; "
-                    "falling back to stub", user_id, exc
+                    "bgutil HTTP PO token generation failed for user %s: %s; "
+                    "falling back to stub", user_id, exc,
                 )
 
         return self._stub_token(user_id, player_client, video_id)
 
+    # ------------------------------------------------------------------ #
+    # bgutil HTTP integration
+    # ------------------------------------------------------------------ #
+    async def _bgutil_ready(self) -> bool:
+        """Return True if the bgutil server is (still) reachable."""
+        if self._bgutil_available is True:
+            return True
+        # Re-probe if we previously failed (server may have come up).
+        self._bgutil_available = await self._probe_bgutil()
+        return self._bgutil_available
+
+    async def _generate_via_bgutil_http(
+        self, user: Any, player_client: str, video_id: str | None
+    ) -> str:
+        """Call the bgutil Node.js server's POST /get_pot endpoint.
+
+        The bgutil server generates a PO token using BotGuard attestation.
+        It does NOT require user credentials — it mints anonymous tokens
+        that are valid for the given player client context.
+        """
+        if self._http is None:
+            raise POTokenError("HTTP client not initialised")
+
+        # Build the InnerTube context for the requested player client.
+        innertube_context = self._build_innertube_context(player_client)
+
+        payload: dict[str, Any] = {
+            "bypass_cache": False,
+        }
+        if innertube_context:
+            payload["innertube_context"] = innertube_context
+        if video_id:
+            # For player tokens the content binding is the video ID.
+            payload["content_binding"] = video_id
+
+        url = f"{self._bgutil_url}/get_pot"
+        logger.debug("Calling bgutil %s with payload keys: %s", url, list(payload.keys()))
+
+        resp = await self._http.post(url, json=payload, timeout=120.0)
+
+        if resp.status_code != 200:
+            body = resp.text[:500]
+            raise POTokenError(
+                f"bgutil server returned {resp.status_code}: {body}"
+            )
+
+        data = resp.json()
+        po_token = data.get("poToken") or data.get("po_token")
+        if not po_token:
+            raise POTokenError(
+                f"bgutil server response missing poToken: {json.dumps(data)[:300]}"
+            )
+
+        logger.info(
+            "bgutil generated PO token for client=%s video=%s (len=%d)",
+            player_client, video_id or "none", len(po_token),
+        )
+        return po_token
+
+    @staticmethod
+    def _build_innertube_context(player_client: str) -> dict[str, Any] | None:
+        """Build a minimal InnerTube context for the given player client.
+
+        The bgutil server uses this to determine which BotGuard attestation
+        to generate. If the client is unknown, returns None (bgutil will
+        use its default).
+        """
+        # Map our player client names to InnerTube client names.
+        client_map = {
+            "web_music": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "2.20240101.00.00",
+                    "hl": "en",
+                    "gl": "US",
+                }
+            },
+            "web": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": "2.20240101.00.00",
+                    "hl": "en",
+                    "gl": "US",
+                }
+            },
+            "android": {
+                "client": {
+                    "clientName": "ANDROID_MUSIC",
+                    "clientVersion": "8.19.19",
+                    "androidSdkVersion": 30,
+                    "hl": "en",
+                    "gl": "US",
+                }
+            },
+        }
+        return client_map.get(player_client)
+
+    # ------------------------------------------------------------------ #
+    # Credential parsing (kept for future use / OAuth flow)
+    # ------------------------------------------------------------------ #
     def _parse_credentials(self, user: Any) -> dict[str, Any] | None:
         """Decrypt and parse the user's stored Google credential blob.
 
@@ -156,9 +282,7 @@ class POTokenGenerator:
             # Not a Fernet-encrypted blob — treat as a raw refresh token.
             return {"type": "refresh_token", "token": user.encrypted_google_refresh_token}
         try:
-            import json as _json
-
-            data = _json.loads(raw)
+            data = json.loads(raw)
             if isinstance(data, dict) and "type" in data:
                 return data
         except Exception:
@@ -166,73 +290,9 @@ class POTokenGenerator:
         # Not JSON — treat as a raw refresh token.
         return {"type": "refresh_token", "token": raw}
 
-    async def _generate_with_bgutil(
-        self, user: Any, player_client: str, video_id: str | None
-    ) -> str:  # pragma: no cover - depends on optional lib
-        """Generate a real PO token via bgutil using the user's credentials."""
-        creds = self._parse_credentials(user)
-        if creds is None:
-            raise POTokenError("No Google credentials stored for user")
-
-        if creds.get("type") == "username_password":
-            return await self._generate_with_username_password(
-                creds, player_client, video_id
-            )
-
-        # Refresh-token path (OAuth flow).
-        token = creds.get("token", "")
-        provider = self._bgutil()
-        if hasattr(provider, "get_pot"):
-            result = provider.get_pot(
-                video_id=video_id or "", player_client=player_client
-            )
-            if isinstance(result, dict):
-                return result.get("po_token") or result.get("token") or str(result)
-            return str(result)
-        raise POTokenError("bgutil provider has no get_pot() method")
-
-    async def _generate_with_username_password(
-        self, creds: dict[str, Any], player_client: str, video_id: str | None
-    ) -> str:  # pragma: no cover - depends on optional lib
-        """Generate a PO token using username/password credentials.
-
-        This uses the bgutil provider's cookie-based flow: log in to Google
-        with the username/password, capture the cookies, and use them to mint
-        a PO token. The exact API varies by bgutil version; we attempt the
-        documented shape and raise if it's unavailable (the caller falls back
-        to the stub).
-        """
-        username = creds.get("username", "")
-        password = creds.get("password", "")
-        if not username or not password:
-            raise POTokenError("Missing username or password in credentials")
-
-        provider = self._bgutil()
-        # bgutil's POTProvider may expose a login/cookie method. We attempt the
-        # most common entry points and raise if none are available.
-        if hasattr(provider, "login"):
-            cookies = provider.login(username=username, password=password)
-            if hasattr(provider, "get_pot"):
-                result = provider.get_pot(
-                    video_id=video_id or "", player_client=player_client
-                )
-                if isinstance(result, dict):
-                    return result.get("po_token") or result.get("token") or str(result)
-                return str(result)
-        if hasattr(provider, "get_pot_with_cookies"):
-            result = provider.get_pot_with_cookies(
-                username=username,
-                password=password,
-                video_id=video_id or "",
-                player_client=player_client,
-            )
-            if isinstance(result, dict):
-                return result.get("po_token") or result.get("token") or str(result)
-            return str(result)
-        raise POTokenError(
-            "bgutil provider does not support username/password PO token generation"
-        )
-
+    # ------------------------------------------------------------------ #
+    # Stub fallback
+    # ------------------------------------------------------------------ #
     @staticmethod
     def _stub_token(
         user_id: str, player_client: str, video_id: str | None
@@ -261,6 +321,7 @@ class POTokenGenerator:
         now = datetime.now(timezone.utc)
         gen = generated_at or (cached.generated_at if cached else now)
         exp = expires_at or (cached.expires_at if cached else now)
+        is_stub = token.startswith("stub-pot-")
         return PoTokenResponse(
             po_token=token,
             player_client=player_client,
@@ -268,13 +329,19 @@ class POTokenGenerator:
             generated_at=gen,
             expires_at=exp,
             gvs_po_token=token,
-            metadata={"generator": "bgutil" if self._bgutil else "stub"},
+            metadata={
+                "generator": "stub" if is_stub else "bgutil",
+                "bgutil_url": self._bgutil_url,
+                "bgutil_available": self._bgutil_available,
+            },
         )
 
     async def status(self) -> dict[str, Any]:
         """Report generator status (for /api/v1/status)."""
         return {
-            "backend": "bgutil" if self._bgutil else "stub",
+            "backend": "bgutil" if self._bgutil_available else "stub",
+            "bgutil_url": self._bgutil_url,
+            "bgutil_available": self._bgutil_available,
             "cache_ttl_seconds": self._settings.po_cache_ttl,
             "player_clients": self._settings.player_client_list,
         }
