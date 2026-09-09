@@ -1,5 +1,5 @@
 name: PO Token Server
-version: "1.1.1"
+version: "1.1.2"
 slug: po_token_server
 description: >-
   Self-hosted, multi-user PO Token server with OAuth 2.0 / OIDC login,
@@ -34,6 +34,7 @@ options:
   po_cache_ttl: 21600
   po_player_clients: "web_music,web,android"
   cors_origins: "*"
+  admin_emails: ""
 schema:
   data_dir: str
   public_url: str
@@ -49,5 +50,6 @@ schema:
   po_cache_ttl: int
   po_player_clients: str
   cors_origins: str
+  admin_emails: str
 advanced: true
 webui: "http://[HOST]:[PORT:4416]"

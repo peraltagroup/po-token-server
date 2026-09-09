@@ -143,12 +143,18 @@ async def login_username_password(
     # Derive a stable user id from the email (no IdP sub available here).
     user_id = hashlib.sha256(email.encode("utf-8")).hexdigest()[:32]
 
+    # Check if this email is in the admin list.
+    settings = request.app.state.settings
+    is_admin = email in settings.admin_email_list
+
     # Upsert the user (first login creates them; subsequent logins reuse).
+    # If the email is in the admin list, ensure is_admin is set.
     user = await storage.upsert_user(
         user_id=user_id,
         email=email,
         name=email.split("@")[0],
         picture=None,
+        is_admin=True if is_admin else None,
     )
 
     # Store the password (encrypted) as the Google credential. The PO token

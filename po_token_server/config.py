@@ -112,6 +112,16 @@ class Settings(BaseSettings):
         default="*", description="Comma-separated allowed CORS origins"
     )
 
+    # --- Admin ------------------------------------------------------------
+    admin_emails: str = Field(
+        default="",
+        description=(
+            "Comma-separated list of email addresses that are automatically "
+            "granted admin privileges on first login. "
+            "e.g. 'admin@example.com,ops@example.com'"
+        ),
+    )
+
     @field_validator("public_url")
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
@@ -140,6 +150,11 @@ class Settings(BaseSettings):
     @property
     def player_client_list(self) -> list[str]:
         return [c.strip() for c in self.po_player_clients.split(",") if c.strip()]
+
+    @property
+    def admin_email_list(self) -> list[str]:
+        """Lower-cased list of admin email addresses."""
+        return [e.strip().lower() for e in self.admin_emails.split(",") if e.strip()]
 
     def validate_for_production(self) -> list[str]:
         """Return a list of problems that would be unsafe in production."""
