@@ -142,17 +142,46 @@ class POTokenGenerator:
 
         return self._stub_token(user_id, player_client, video_id)
 
+    def _parse_credentials(self, user: Any) -> dict[str, Any] | None:
+        """Decrypt and parse the user's stored Google credential blob.
+
+        Returns a dict with ``type`` = "username_password" or "refresh_token",
+        or None if no credentials are stored / parsing fails.
+        """
+        if not user.encrypted_google_refresh_token:
+            return None
+        try:
+            raw = self._cipher.decrypt(user.encrypted_google_refresh_token)
+        except Exception:
+            # Not a Fernet-encrypted blob — treat as a raw refresh token.
+            return {"type": "refresh_token", "token": user.encrypted_google_refresh_token}
+        try:
+            import json as _json
+
+            data = _json.loads(raw)
+            if isinstance(data, dict) and "type" in data:
+                return data
+        except Exception:
+            pass
+        # Not JSON — treat as a raw refresh token.
+        return {"type": "refresh_token", "token": raw}
+
     async def _generate_with_bgutil(
         self, user: Any, player_client: str, video_id: str | None
     ) -> str:  # pragma: no cover - depends on optional lib
         """Generate a real PO token via bgutil using the user's credentials."""
-        refresh_token = self._cipher.decrypt(user.encrypted_google_refresh_token)
-        # The exact API varies by bgutil version; we call the most common entry
-        # point and let the caller fall back to the stub on failure.
+        creds = self._parse_credentials(user)
+        if creds is None:
+            raise POTokenError("No Google credentials stored for user")
+
+        if creds.get("type") == "username_password":
+            return await self._generate_with_username_password(
+                creds, player_client, video_id
+            )
+
+        # Refresh-token path (OAuth flow).
+        token = creds.get("token", "")
         provider = self._bgutil()
-        # bgutil's POTProvider typically exposes get_pot(video_id, player_client)
-        # after being configured with credentials. We attempt the documented
-        # shape and raise if it's unavailable.
         if hasattr(provider, "get_pot"):
             result = provider.get_pot(
                 video_id=video_id or "", player_client=player_client
@@ -161,6 +190,48 @@ class POTokenGenerator:
                 return result.get("po_token") or result.get("token") or str(result)
             return str(result)
         raise POTokenError("bgutil provider has no get_pot() method")
+
+    async def _generate_with_username_password(
+        self, creds: dict[str, Any], player_client: str, video_id: str | None
+    ) -> str:  # pragma: no cover - depends on optional lib
+        """Generate a PO token using username/password credentials.
+
+        This uses the bgutil provider's cookie-based flow: log in to Google
+        with the username/password, capture the cookies, and use them to mint
+        a PO token. The exact API varies by bgutil version; we attempt the
+        documented shape and raise if it's unavailable (the caller falls back
+        to the stub).
+        """
+        username = creds.get("username", "")
+        password = creds.get("password", "")
+        if not username or not password:
+            raise POTokenError("Missing username or password in credentials")
+
+        provider = self._bgutil()
+        # bgutil's POTProvider may expose a login/cookie method. We attempt the
+        # most common entry points and raise if none are available.
+        if hasattr(provider, "login"):
+            cookies = provider.login(username=username, password=password)
+            if hasattr(provider, "get_pot"):
+                result = provider.get_pot(
+                    video_id=video_id or "", player_client=player_client
+                )
+                if isinstance(result, dict):
+                    return result.get("po_token") or result.get("token") or str(result)
+                return str(result)
+        if hasattr(provider, "get_pot_with_cookies"):
+            result = provider.get_pot_with_cookies(
+                username=username,
+                password=password,
+                video_id=video_id or "",
+                player_client=player_client,
+            )
+            if isinstance(result, dict):
+                return result.get("po_token") or result.get("token") or str(result)
+            return str(result)
+        raise POTokenError(
+            "bgutil provider does not support username/password PO token generation"
+        )
 
     @staticmethod
     def _stub_token(

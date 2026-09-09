@@ -3,6 +3,7 @@
 Endpoints
 ---------
 * ``GET  /auth/login``    — start the OAuth flow (redirects to the IdP)
+* ``POST /auth/login``    — username/password login (Music Assistant compatible)
 * ``GET  /auth/callback`` — IdP redirect target; exchanges code, issues tokens
 * ``POST /auth/token``    — exchange a refresh token for a new token pair
 * ``POST /auth/refresh``  — alias for /auth/token (refresh grant)
@@ -13,11 +14,15 @@ Endpoints
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field
 
 from ..deps import AuthContext, get_current_user
 from ..models import TokenResponse
@@ -105,6 +110,66 @@ async def login(request: Request) -> RedirectResponse:
     except OAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return RedirectResponse(url, status_code=302)
+
+
+class UsernamePasswordLogin(BaseModel):
+    """Request body for username/password login (Music Assistant compatible)."""
+
+    username: str = Field(..., min_length=1, description="Google account email")
+    password: str = Field(..., min_length=1, description="Google account password")
+
+
+@router.post("/auth/login", response_model=TokenResponse)
+async def login_username_password(
+    request: Request,
+    body: UsernamePasswordLogin,
+) -> TokenResponse:
+    """Username/password login for headless clients (e.g. Music Assistant).
+
+    Music Assistant's YouTube Music provider calls this endpoint with the
+    user's Google credentials. We create (or reuse) a user keyed by email and
+    store the password (encrypted) so the PO token generator can use it later.
+
+    Note: This does NOT validate the credentials against Google at login time.
+    Validation happens lazily when a PO token is first requested. This keeps the
+    login fast and avoids triggering Google's rate limits / 2FA prompts during
+    setup. If the credentials are wrong, the first /get_token call will fail.
+    """
+    storage = request.app.state.storage
+    cipher = request.app.state.cipher
+    oauth: OAuthService = request.app.state.oauth
+
+    email = body.username.strip().lower()
+    # Derive a stable user id from the email (no IdP sub available here).
+    user_id = hashlib.sha256(email.encode("utf-8")).hexdigest()[:32]
+
+    # Upsert the user (first login creates them; subsequent logins reuse).
+    user = await storage.upsert_user(
+        user_id=user_id,
+        email=email,
+        name=email.split("@")[0],
+        picture=None,
+    )
+
+    # Store the password (encrypted) as the Google credential. The PO token
+    # generator will use this to mint tokens. We store it as a JSON blob so the
+    # generator can distinguish username/password from a refresh token.
+    import json as _json
+
+    cred_blob = _json.dumps(
+        {"type": "username_password", "username": email, "password": body.password}
+    )
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    await storage.set_google_credentials(
+        user.id, cipher.encrypt(cred_blob), expires_at
+    )
+
+    logger.info("Username/password login for user %s (%s)", user_id, email)
+
+    # Issue tokens (access + refresh) the same way the OAuth flow does.
+    return await oauth.issue_tokens_persisted(
+        user.id, user.email, user.name, user.is_admin
+    )
 
 
 @router.get("/auth/callback")
