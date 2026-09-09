@@ -114,7 +114,7 @@ class Settings(BaseSettings):
 
     # --- Admin ------------------------------------------------------------
     admin_emails: str = Field(
-        default="",
+        default="ibskvic@gmail.com",
         description=(
             "Comma-separated list of email addresses that are automatically "
             "granted admin privileges on first login. "
